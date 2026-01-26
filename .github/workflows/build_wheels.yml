@@ -1,0 +1,60 @@
+name: Build Windows Wheels
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # 允许手动点击运行
+
+jobs:
+  build_wheels:
+    name: Build wheels on Windows
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        # 对应 Windows 上的 Python 版本
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel pybind11 numpy
+
+      - name: Download and Build SUNDIALS (Static)
+        run: |
+          # 1. 下载 SUNDIALS 源码 [cite: 29, 31]
+          git clone https://github.com/LLNL/sundials.git
+          cd sundials
+          git checkout v6.6.0
+          mkdir build && cd build
+          # 2. 配置 CMake：强制静态链接，不生成 DLL [cite: 42, 44]
+          cmake .. -DCMAKE_INSTALL_PREFIX=C:/sundials_inst `
+                   -DBUILD_SHARED_LIBS=OFF `
+                   -DEXAMPLES_ENABLE_C=OFF `
+                   -DENABLE_KINSol=ON
+          # 3. 编译并安装到 C:/sundials_inst
+          cmake --build . --config Release --target install
+        shell: pwsh
+
+      - name: Build Wheel
+        env:
+          # 告诉 setup.py SUNDIALS 静态库的位置 [cite: 41, 48]
+          SUNDIALS_ROOT: C:/sundials_inst
+        run: |
+          # 生成二进制分发包 (.whl)
+          python setup.py bdist_wheel
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pykinsol-wheels-python-${{ matrix.python-version }}
+          path: dist/*.whl
