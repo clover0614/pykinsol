@@ -5,7 +5,7 @@ import os
 
 # 确保能找到编译好的 kinsol_py 包
 sys.path.append(os.path.dirname(__file__))
-from kinsol_py import kinsol
+from pykinsol import kinsol
 
 def main():
     # --- 1. 问题规模设置 (2D Bratu Problem) ---
@@ -103,6 +103,10 @@ def main():
         print(f"KINSOL 状态码: {result.get('status')}")
         print(f"解统计: Min={np.min(result_x):.4f}, Max={np.max(result_x):.4f}")
         
+        manual_res_vector = bratu_residual(result_x)
+        manual_norm = np.linalg.norm(manual_res_vector)
+        print(f"手动计算验证: {manual_norm:.3e}")
+
         # 边界约束检查
         in_bounds = np.all((result_x >= lb - 1e-7) & (result_x <= ub + 1e-7))
         print(f"约束满足检查: {in_bounds}")

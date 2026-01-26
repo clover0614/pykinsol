@@ -84,11 +84,11 @@ def main():
         print(f"总耗时: {duration_ms:.3f} ms")
         print(f"最终解 x: {result_x}")
         print(f"最终残差 Norm: {result['fun']:.3e}")
-        print(f"状态码 (flag): {result.get('status')}") # 假设 C++ 已捕获 flag
-        
-        # 误差分析
-        max_err = np.max(np.abs(result_x - x_true))
-        print(f"最大绝对误差: {max_err:.6e}")
+
+        manual_res_vector = residual_func(result_x)
+        manual_norm = np.linalg.norm(manual_res_vector)
+        print(f"手动计算验证: {manual_norm:.3e}")
+
         
         # 边界约束验证
         within_bounds = np.all((result_x >= lb - 1e-9) & (result_x <= ub + 1e-9))
