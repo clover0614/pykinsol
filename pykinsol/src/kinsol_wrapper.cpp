@@ -122,15 +122,25 @@ py::dict solve_cpp(py::function func, py::array_t<double> x0, py::object jac,
     py::array_t<double> x_res(N);
     for (int i = 0; i < N; ++i) x_res.mutable_data()[i] = data.lb[i] + NV_Ith_S(u, i);
     
-    // 获取最终的残差范数 (Residual Norm)
-    double fnorm;
-    KINGetFuncNorm(kin_mem, &fnorm);
+    // // 获取最终的残差范数 (Residual Norm)，这样得到的是2N系统的残差，不对！！
+    // double fnorm;
+    // KINGetFuncNorm(kin_mem, &fnorm);
+
+    py::array_t<double> phys_res = data.func(x_res); 
+    auto res_p = phys_res.unchecked<1>();
+    double phys_fnorm = 0.0;
+    for (int i = 0; i < N; ++i) {
+        phys_fnorm += res_p(i) * res_p(i);
+    }
+    phys_fnorm = std::sqrt(phys_fnorm);
 
     N_VDestroy(u); N_VDestroy(constr); SUNLinSolFree(LS); SUNMatDestroy(J);
     KINFree(&kin_mem); SUNContext_Free(&sunctx);
 
     // 返回python字典
-    return py::dict("x"_a=x_res, "fun"_a=fnorm, "success"_a=is_success, "status"_a=flag);
+    // return py::dict("x"_a=x_res, "fun"_a=fnorm, "success"_a=is_success, "status"_a=flag);
+    // 将 fnorm 替换为 phys_fnorm
+    return py::dict("x"_a=x_res, "fun"_a=phys_fnorm, "success"_a=is_success, "status"_a=flag);
 }
 
 PYBIND11_MODULE(kinsol_cpp, m) {
