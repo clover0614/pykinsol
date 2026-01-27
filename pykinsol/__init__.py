@@ -1,3 +1,4 @@
+# 上层封装，定义用户调用的接口设计
 import numpy as np
 from . import kinsol_cpp
 
@@ -21,14 +22,13 @@ def kinsol(func, x0, fprime=None, lb=None, ub=None):
         ub = np.ascontiguousarray(ub, dtype=np.float64)
         
     # 3. 边界安全性检查与修正 
-    # 确保初始猜想值严格在内部区域
+    # 确保初始猜想值严格在内部区域，不在边界上
     x_input = np.clip(x_input, lb + 1e-8, ub - 1e-8)
     
     # 4. 调用底层 C++ 扩展 [cite: 12, 64]
-    # 注意：fprime 如果为 None，C++ 内部应处理为使用差分法
+    # fprime 如果为 None，C++ 内部应处理为使用差分法
     result = kinsol_cpp.solve(func, x_input, fprime, lb, ub)
     
-    # 5. (可选) 可以将 result 字典转换为一个更易用的对象
     return result
 
 # 定义包级别公开的接口

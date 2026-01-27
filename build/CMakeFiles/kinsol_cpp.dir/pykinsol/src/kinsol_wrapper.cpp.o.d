@@ -390,5 +390,4 @@ CMakeFiles/kinsol_cpp.dir/pykinsol/src/kinsol_wrapper.cpp.o: \
  /usr/local/include/nvector/nvector_serial.h \
  /usr/local/include/sunmatrix/sunmatrix_dense.h \
  /usr/local/include/sunlinsol/sunlinsol_dense.h \
- /usr/local/include/sundials/sundials_dense.h \
- /usr/include/c++/11/iostream
+ /usr/local/include/sundials/sundials_dense.h

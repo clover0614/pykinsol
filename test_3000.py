@@ -2,9 +2,6 @@ import time
 import numpy as np
 import sys
 import os
-
-# 确保能找到编译好的 kinsol_py 包
-sys.path.append(os.path.dirname(__file__))
 from pykinsol import kinsol
 
 def main():
@@ -87,7 +84,7 @@ def main():
 
         manual_res_vector = residual_func(result_x)
         manual_norm = np.linalg.norm(manual_res_vector)
-        print(f"手动计算验证: {manual_norm:.3e}")
+        print(f"手动计算验证残差值: {manual_norm:.3e}")
 
         
         # 边界约束验证

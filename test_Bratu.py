@@ -2,9 +2,6 @@ import time
 import numpy as np
 import sys
 import os
-
-# 确保能找到编译好的 kinsol_py 包
-sys.path.append(os.path.dirname(__file__))
 from pykinsol import kinsol
 
 def main():
@@ -12,7 +9,7 @@ def main():
     N = 60
     size = N * N
     lam = 6.0
-    h = 1.0 / (N - 1)  # 网格间距
+    h = 1.0 / (N - 1)  # 网格间距，是一个常数
     h_sq = h * h
     
     print(f"=== 测试场景: 2D Bratu Problem ===")
@@ -100,7 +97,6 @@ def main():
         print(f"总耗时: {duration_ms:.3f} ms")
         print(f"最终解 x: {result_x}")
         print(f"最终残差范数: {result['fun']:.3e}")
-        print(f"KINSOL 状态码: {result.get('status')}")
         print(f"解统计: Min={np.min(result_x):.4f}, Max={np.max(result_x):.4f}")
         
         manual_res_vector = bratu_residual(result_x)

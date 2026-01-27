@@ -3,6 +3,7 @@ import sys
 from setuptools import setup, Extension
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 
+# 自定义构建类，处理不同操作系统的差异
 class BuildExt(build_ext):
     def build_extensions(self):
         # 针对 Windows 的特殊编译器参数
