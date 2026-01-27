@@ -1,3 +1,0 @@
-/root/pykinsol_project/build/CMakeFiles/kinsol_cpp.dir
-/root/pykinsol_project/build/CMakeFiles/edit_cache.dir
-/root/pykinsol_project/build/CMakeFiles/rebuild_cache.dir

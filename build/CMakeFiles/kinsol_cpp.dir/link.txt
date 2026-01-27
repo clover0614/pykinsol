@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC -flto=auto -shared  -o kinsol_cpp.cpython-39-x86_64-linux-gnu.so CMakeFiles/kinsol_cpp.dir/pykinsol/src/kinsol_wrapper.cpp.o  -Wl,-rpath,/usr/local/lib /usr/local/lib/libsundials_kinsol.so.6.6.0 /usr/local/lib/libsundials_nvecserial.so.6.6.0 /usr/local/lib/libsundials_sunlinsoldense.so.4.6.0 /usr/local/lib/libsundials_sunmatrixdense.so.4.6.0 

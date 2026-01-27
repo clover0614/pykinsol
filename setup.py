@@ -26,9 +26,17 @@ ext_modules = [
             os.path.join(sundials_root, "lib"),
             os.path.join(sundials_root, "lib64"),
         ],
-        # 静态链接 SUNDIALS 的核心组件
-        libraries=["sundials_kinsol", "sundials_nvecserial"],
+        # 【关键修改】在 libraries 中增加 "sundials_sunlinsolspgmr"
+        # 注意：sundials_sunlinsoldense 也建议显式写出来，以防万一
+        libraries=[
+            "sundials_kinsol", 
+            "sundials_nvecserial", 
+            "sundials_sunmatrixdense",  # 对应 SUNDenseMatrix
+            "sundials_sunlinsoldense",  # 对应 SUNLinSol_Dense
+            "sundials_sunlinsolspgmr"   # [新增] 对应 SUNLinSol_SPGMR (GMRES)
+        ],
         cxx_std=14,
+        extra_compile_args=["-Wall", "-O2"],
     ),
 ]
 
