@@ -5,7 +5,7 @@ from . import kinsol_cpp
 KIN_NONE = kinsol_cpp.KIN_NONE
 KIN_LINESEARCH = kinsol_cpp.KIN_LINESEARCH
 
-def kinsol(func, x0, fprime=None, lb=None, ub=None, 
+def pykinsol(func, x0, fprime=None, lb=None, ub=None, 
            method='linesearch', linear_solver='dense'):
     """
     Python 接口封装
@@ -53,4 +53,4 @@ def kinsol(func, x0, fprime=None, lb=None, ub=None,
     
     return result
 
-__all__ = ["kinsol", "KIN_NONE", "KIN_LINESEARCH"]
+__all__ = ["pykinsol", "KIN_NONE", "KIN_LINESEARCH"]

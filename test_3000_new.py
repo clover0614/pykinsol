@@ -4,7 +4,7 @@ import sys
 import os
 # 确保能找到编译好的 kinsol_py 包
 # sys.path.append(os.path.dirname(__file__)) # 如果已经pip install了就不需要这行
-from pykinsol import kinsol
+from pykinsol import pykinsol
 
 def main():
     # --- 1. 问题规模与参数设置 ---
@@ -57,32 +57,32 @@ def main():
     # --- 方案 1: 使用 GMRES (强烈推荐用于 3000 维问题) ---
     # 优点: 极快，不需要构建巨大的 Jacobian 矩阵
     # 缺点: 雅可比信息通过差分获得
-    print(f"\n>>> 正在使用 [GMRES + LineSearch] 策略求解...")
-    start_time = time.time()
+    # print(f"\n>>> 正在使用 [GMRES + LineSearch] 策略求解...")
+    # start_time = time.time()
     
-    result = kinsol(
-        func=residual_func,
-        x0=x0,
-        fprime=None,         # GMRES 模式通常不需要显式 Jacobian
-        lb=lb, 
-        ub=ub,
-        method='linesearch',     # 策略: 'linesearch' 或 'newton'
-        linear_solver='gmres'    # 求解器: 'gmres' (稀疏/大系统) 或 'dense'
-    )
+    # result = pykinsol(
+    #     func=residual_func,
+    #     x0=x0,
+    #     fprime=None,         # GMRES 模式通常不需要显式 Jacobian
+    #     lb=lb, 
+    #     ub=ub,
+    #     method='linesearch',     # 策略: 'linesearch' 或 'newton'
+    #     linear_solver='gmres'    # 求解器: 'gmres' (稀疏/大系统) 或 'dense'
+    # )
 
     
     # --- 方案 2: 使用 Dense (你之前的逻辑) ---
-    # print(f"\n>>> 正在使用 [Dense + LineSearch] 策略求解...")
-    # start_time = time.time()
-    # result = kinsol(
-    #     func=residual_func,
-    #     x0=x0,
-    #     fprime=jacobian_func,    # Dense 模式必须提供 Jacobian 以加速
-    #     lb=lb, 
-    #     ub=ub,
-    #     method='linesearch',
-    #     linear_solver='dense'    # 使用稠密矩阵求解
-    # )
+    print(f"\n>>> 正在使用 [Dense + LineSearch] 策略求解...")
+    start_time = time.time()
+    result = pykinsol(
+        func=residual_func,
+        x0=x0,
+        fprime=jacobian_func,    # Dense 模式必须提供 Jacobian 以加速
+        lb=lb, 
+        ub=ub,
+        method='linesearch',
+        linear_solver='dense'    # 使用稠密矩阵求解
+    )
     
     end_time = time.time()
     # =================================================================
