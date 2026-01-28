@@ -2,15 +2,26 @@ import time
 import numpy as np
 import sys
 import os
-# 确保能找到编译好的 kinsol_py 包
-# sys.path.append(os.path.dirname(__file__)) # 如果已经pip install了就不需要这行
-from pykinsol import pykinsol
+
+# ==========================================
+# 【关键修改 1】 导入方式适配
+# 您的包现在是一个顶层 pyd，叫 pykinsol
+# ==========================================
+try:
+    import pykinsol
+    print(f"✅ 成功导入 pykinsol 模块")
+    print(f"📂 模块路径: {pykinsol.__file__}")
+except ImportError as e:
+    print(f"❌ 导入失败: {e}")
+    print("请检查是否已执行 pip install . 并且不在源码目录下运行此脚本")
+    sys.exit(1)
 
 def main():
     # --- 1. 问题规模与参数设置 ---
+    # 3000 维对于 Dense 矩阵来说有点大 (9百万个元素)，GMRES 会快很多
     N = 3000
     epsilon = 0.1
-    print(f"=== 测试场景: {N} 维 强耦合非线性方程组 ===")
+    print(f"\n=== 测试场景: {N} 维 强耦合非线性方程组 ===")
 
     # --- 2. 构造目标真值 (Ground Truth) ---
     indices = np.arange(N)
@@ -33,7 +44,6 @@ def main():
 
     # --- 6. 定义雅可比矩阵 (仅供 Dense 模式使用) ---
     def jacobian_func(x):
-        # 注意：对于 3000x3000 矩阵，Dense 模式其实很慢且耗内存
         J = np.zeros((N, N))
         diag_indices = np.arange(N)
         J[diag_indices, diag_indices] = 3.0 * (x**2)
@@ -45,72 +55,71 @@ def main():
     # --- 7. 初始检查 ---
     x0 = np.full(N, 2.0) 
     print("-" * 30)
-    print("=== 状态预检 ===")
-    init_res = residual_func(x0)
-    print(f"初始物理残差 Norm: {np.linalg.norm(init_res):.6e}")
+    print(f"初始物理残差 Norm: {np.linalg.norm(residual_func(x0)):.6e}")
     print("-" * 30)
 
     # =================================================================
-    # 【核心修改区域】 适配新接口调用
+    # 测试 1: GMRES 求解器 (推荐用于大系统)
     # =================================================================
-    
-    # --- 方案 1: 使用 GMRES (强烈推荐用于 3000 维问题) ---
-    # 优点: 极快，不需要构建巨大的 Jacobian 矩阵
-    # 缺点: 雅可比信息通过差分获得
-    # print(f"\n>>> 正在使用 [GMRES + LineSearch] 策略求解...")
-    # start_time = time.time()
-    
-    # result = pykinsol(
-    #     func=residual_func,
-    #     x0=x0,
-    #     fprime=None,         # GMRES 模式通常不需要显式 Jacobian
-    #     lb=lb, 
-    #     ub=ub,
-    #     method='linesearch',     # 策略: 'linesearch' 或 'newton'
-    #     linear_solver='gmres'    # 求解器: 'gmres' (稀疏/大系统) 或 'dense'
-    # )
-
-    
-    # --- 方案 2: 使用 Dense (你之前的逻辑) ---
-    print(f"\n>>> 正在使用 [Dense + LineSearch] 策略求解...")
+    print(f"\n>>> [测试 1] 正在使用 [GMRES + LineSearch] 策略求解...")
     start_time = time.time()
-    result = pykinsol(
+    
+    # 【关键修改 2】 调用方式适配: pykinsol.pykinsol(...)
+    result_gmres = pykinsol.pykinsol(
         func=residual_func,
         x0=x0,
-        fprime=jacobian_func,    # Dense 模式必须提供 Jacobian 以加速
+        fprime=None,       # GMRES 模式不需要 Jacobian，传 None
         lb=lb, 
         ub=ub,
         method='linesearch',
-        linear_solver='dense'    # 使用稠密矩阵求解
+        linear_solver='gmres'  # 使用您新增的 GMRES 功能
     )
     
-    end_time = time.time()
+    duration = (time.time() - start_time) * 1000
+    print(f"GMRES 耗时: {duration:.3f} ms")
+    print(f"GMRES 结果状态: {'成功' if result_gmres['success'] else '失败'}")
+    print(f"GMRES 最终残差: {result_gmres['fun']:.3e}")
+
     # =================================================================
-
-    # --- 9. 结果展示与分析 ---
-    duration_ms = (end_time - start_time) * 1000
+    # 测试 2: Dense 求解器 (旧模式，用于对比)
+    # =================================================================
+    print(f"\n>>> [测试 2] 正在使用 [Dense + LineSearch] 策略求解...")
+    start_time = time.time()
     
-    if result["success"]:
-        result_x = result["x"]
-        
-        print(f"求解成功!")
-        print(f"总耗时: {duration_ms:.3f} ms")
-        # print(f"最终解 x: {result_x}") # 3000维太长，不打印了
-        
-        # 此时 result['fun'] 已经是你修改 C++ 后返回的纯物理残差了
-        print(f"最终残差 Norm (from Solver): {result['fun']:.3e}")
+    # 注意: 3000维 Dense 矩阵约 72MB，计算稍慢是正常的
+    result_dense = pykinsol.pykinsol(
+        func=residual_func,
+        x0=x0,
+        fprime=jacobian_func,    # Dense 模式必须提供 Jacobian
+        lb=lb, 
+        ub=ub,
+        method='linesearch',
+        linear_solver='dense'
+    )
+    
+    duration = (time.time() - start_time) * 1000
+    print(f"Dense 耗时: {duration:.3f} ms")
+    print(f"Dense 结果状态: {'成功' if result_dense['success'] else '失败'}")
+    print(f"Dense 最终残差: {result_dense['fun']:.3e}")
 
-        # 手动计算验证
-        manual_res_vector = residual_func(result_x)
-        manual_norm = np.linalg.norm(manual_res_vector)
-        print(f"手动计算验证残差值: {manual_norm:.3e}")
-
+    # =================================================================
+    # 结果验证 (以 GMRES 结果为例)
+    # =================================================================
+    if result_gmres["success"]:
+        final_x = result_gmres["x"]
+        
         # 边界约束验证
-        within_bounds = np.all((result_x >= lb - 1e-9) & (result_x <= ub + 1e-9))
-        print(f"约束满足检查: {within_bounds}")
-
-    else:
-        print(f"求解失败。状态码: {result.get('status')}, 最终残差: {result['fun']:.3e}")
+        within_bounds = np.all((final_x >= lb - 1e-9) & (final_x <= ub + 1e-9))
+        print(f"\n>>> 约束满足检查: {within_bounds}")
+        
+        # 精度检查
+        err = np.linalg.norm(final_x - x_true)
+        print(f">>> 与真值误差 Norm: {err:.3e}")
+        
+        if err < 1e-4:
+            print("🎉 测试通过！求解结果非常精确。")
+        else:
+            print("⚠️ 警告：虽然收敛但精度似乎一般，请检查物理模型。")
 
 if __name__ == "__main__":
     main()

@@ -218,7 +218,7 @@ PYBIND11_MODULE(pykinsol, m) {
           "Solve nonlinear system F(x)=0 with box constraints.",
           "func"_a, 
           "x0"_a, 
-          "jac"_a = py::none(),      // 可选参数：雅可比
+          "fprime"_a = py::none(),      // 可选参数：雅可比
           "lb"_a = py::none(),       // 可选参数：下界
           "ub"_a = py::none(),       // 可选参数：上界
           "method"_a = "linesearch", // 默认参数：线搜索
