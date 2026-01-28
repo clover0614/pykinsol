@@ -17,8 +17,8 @@ sundials_root = os.environ.get("SUNDIALS_ROOT", "/usr/local")
 
 ext_modules = [
     Pybind11Extension(
-        "pykinsol.kinsol_cpp",
-        ["pykinsol/src/kinsol_wrapper.cpp"],
+        "pykinsol", # 【修改1】这里直接叫 "pykinsol"，生成的 pyd 文件就会在顶层
+        ["pykinsol/src/kinsol_wrapper.cpp"], # 源码路径保持不变
         include_dirs=[
             os.path.join(sundials_root, "include"),
         ],
@@ -26,14 +26,12 @@ ext_modules = [
             os.path.join(sundials_root, "lib"),
             os.path.join(sundials_root, "lib64"),
         ],
-        # 【关键修改】在 libraries 中增加 "sundials_sunlinsolspgmr"
-        # 注意：sundials_sunlinsoldense 也建议显式写出来，以防万一
         libraries=[
             "sundials_kinsol", 
             "sundials_nvecserial", 
-            "sundials_sunmatrixdense",  # 对应 SUNDenseMatrix
-            "sundials_sunlinsoldense",  # 对应 SUNLinSol_Dense
-            "sundials_sunlinsolspgmr"   # [新增] 对应 SUNLinSol_SPGMR (GMRES)
+            "sundials_sunmatrixdense", 
+            "sundials_sunlinsoldense", 
+            "sundials_sunlinsolspgmr"
         ],
         cxx_std=14,
         extra_compile_args=["-Wall", "-O2"],
@@ -42,7 +40,8 @@ ext_modules = [
 
 setup(
     name="pykinsol",
+    version="0.3.0", # 建议升级版本号
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExt},
-    packages=["pykinsol"],
+    packages=[], # 【修改2】关键！设为空列表，表示不包含任何 Python 源码包
 )

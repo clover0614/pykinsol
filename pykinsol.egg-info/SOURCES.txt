@@ -1,9 +1,0 @@
-pyproject.toml
-setup.py
-pykinsol/__init__.py
-pykinsol.egg-info/PKG-INFO
-pykinsol.egg-info/SOURCES.txt
-pykinsol.egg-info/dependency_links.txt
-pykinsol.egg-info/requires.txt
-pykinsol.egg-info/top_level.txt
-pykinsol/src/kinsol_wrapper.cpp
