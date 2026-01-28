@@ -213,8 +213,8 @@ PYBIND11_MODULE(pykinsol, m) {
     m.doc() = "Kinsol solver top-level module (C++ backend)";
 
     // 导出主求解函数
-    // 使用 "solve" 作为函数名，允许用户以 pykinsol.solve(...) 的方式调用
-    m.def("solve", &solve_cpp_wrapper, 
+    // 允许用户以 pykinsol.pykinsol(...) 的方式调用
+    m.def("pykinsol", &solve_cpp_wrapper, 
           "Solve nonlinear system F(x)=0 with box constraints.",
           "func"_a, 
           "x0"_a, 
