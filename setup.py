@@ -40,8 +40,8 @@ ext_modules = [
 
 setup(
     name="pykinsol",
-    version="0.3.0", # 建议升级版本号
+    version="0.4.0", # 建议升级版本号
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExt},
-    packages=[], # 【修改2】关键！设为空列表，表示不包含任何 Python 源码包
+    packages=[], # 设为空列表，表示不包含任何 Python 源码包
 )

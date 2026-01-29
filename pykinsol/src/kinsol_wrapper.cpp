@@ -100,14 +100,15 @@ static int KinsolJacFn(N_Vector u, N_Vector fu, SUNMatrix J, void *user_data, N_
     return 0;
 }
 
-// 主求解器实现 (C++ 内部逻辑)
+// 主求解器实现
 py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object jac, 
                         py::array_t<double> lb, py::array_t<double> ub,
-                        int strategy, int linsol_type) {
+                        int strategy, int linsol_type, 
+                        int verbose) { // <---【新增】verbose 参数
     
     int N = x0.size();
     SUNContext sunctx;
-    SUNContext_Create(nullptr, &sunctx); // 创建 SUNDIALS 上下文
+    SUNContext_Create(nullptr, &sunctx);
 
     KinsolUserData data;
     data.func = func;
@@ -117,115 +118,102 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     data.has_jac = !jac.is_none();
     if (data.has_jac) data.jac_func = jac.cast<py::function>();
 
-    // 初始化松弛变量 u
-    // u = [s1, s2] 其中 s1 = x - lb, s2 = ub - x
+    // 初始化松弛变量 u (保持您原来的松弛变量逻辑)
     N_Vector u = N_VNew_Serial(2 * N, sunctx);
     auto x0_p = x0.unchecked<1>();
     for (int i = 0; i < N; ++i) {
-        NV_Ith_S(u, i) = x0_p(i) - data.lb[i];
-        NV_Ith_S(u, i + N) = data.ub[i] - x0_p(i);
+        NV_Ith_S(u, i) = x0_p(i) - data.lb[i];      // s1
+        NV_Ith_S(u, i + N) = data.ub[i] - x0_p(i);  // s2
     }
 
-    // 创建 KINSOL 内存并初始化
+    // 创建 KINSOL 内存
     void* kin_mem = KINCreate(sunctx);
     KINInit(kin_mem, KinsolSysFn, u);
     KINSetUserData(kin_mem, &data);
 
-    // 设置硬约束：要求所有 s >= 0
+    // 设置约束：松弛变量必须大于等于0
     N_Vector constr = N_VNew_Serial(2 * N, sunctx);
     N_VConst(1.0, constr); 
     KINSetConstraints(kin_mem, constr);
 
-    // 配置线性求解器
+    // --- 【新增】设置日志打印级别 ---
+    // level 0: 不输出
+    // level 1: 输出每次非线性迭代的统计信息 (残差范数, 步长)
+    // level 3: 输出非常详细的调试信息 (包括线性求解细节)
+    KINSetPrintLevel(kin_mem, verbose);
+
+    // 配置线性求解器 (保持不变)
     SUNMatrix J = nullptr;
     SUNLinearSolver LS = nullptr;
 
     if (linsol_type == LINSOL_DENSE) {
-        // 策略 A: 稠密直接求解 (适合小规模问题)
         J = SUNDenseMatrix(2 * N, 2 * N, sunctx);
         LS = SUNLinSol_Dense(u, J, sunctx);
         KINSetLinearSolver(kin_mem, LS, J);
-        
-        // 只有在 Dense 模式下才需要设置雅可比函数
-        if (data.has_jac) {
-            KINSetJacFn(kin_mem, KinsolJacFn);
-        }
+        if (data.has_jac) KINSetJacFn(kin_mem, KinsolJacFn);
     } 
     else if (linsol_type == LINSOL_GMRES) {
-        // 策略 B: GMRES 迭代求解 (适合大规模稀疏问题)
-        // 使用 Matrix-Free 模式 (J 为 NULL)，内部使用差分法计算 J*v
         LS = SUNLinSol_SPGMR(u, PREC_NONE, 0, sunctx);
         KINSetLinearSolver(kin_mem, LS, nullptr);
     }
 
-    // 设置缩放向量 (全为 1.0，表示不缩放)
     N_Vector scaling = N_VNew_Serial(2 * N, sunctx);
     N_VConst(1.0, scaling); 
     
     // 执行求解
-    // 如果需要调试，可以在此处调用 KINSetPrintLevel(kin_mem, 3);
     int flag = KINSol(kin_mem, u, strategy, scaling, scaling);
     
     N_VDestroy(scaling);
 
     bool is_success = (flag >= 0);
 
-    // 从 u 中提取最终结果 x
+    // 提取结果 (从 s1 恢复 x)
     py::array_t<double> x_res(N);
     for (int i = 0; i < N; ++i) x_res.mutable_data()[i] = data.lb[i] + NV_Ith_S(u, i);
     
-    // 计算纯物理残差范数 (用于报告)
-    // 过滤掉松弛变量引入的数值误差，只看 F(x)
+    // 计算物理残差
     py::array_t<double> phys_res = data.func(x_res); 
     auto res_p = phys_res.unchecked<1>();
     double phys_fnorm = 0.0;
-    for (int i = 0; i < N; ++i) {
-        phys_fnorm += res_p(i) * res_p(i);
-    }
+    for (int i = 0; i < N; ++i) phys_fnorm += res_p(i) * res_p(i);
     phys_fnorm = std::sqrt(phys_fnorm);
 
-    // 释放资源
+    // 清理资源
     N_VDestroy(u); N_VDestroy(constr); 
     SUNLinSolFree(LS); 
     if (J) SUNMatDestroy(J); 
     KINFree(&kin_mem); SUNContext_Free(&sunctx);
 
-    // 返回结果字典
     return py::dict("x"_a=x_res, "fun"_a=phys_fnorm, "success"_a=is_success, "status"_a=flag);
 }
 
-// 包装函数：处理来自 Python 的字符串参数
+// 包装函数
 py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object jac, 
                            py::array_t<double> lb, py::array_t<double> ub,
-                           std::string method, std::string linear_solver) {
+                           std::string method, std::string linear_solver, 
+                           int verbose) { // <--- 【新增】暴露给 Python
     
-    // 将字符串参数转换为内部整数常量
     int strategy_int = get_strategy_enum(method);
     int linsol_int = get_linsol_enum(linear_solver);
 
-    // 调用实现层
-    return solve_cpp_impl(func, x0, jac, lb, ub, strategy_int, linsol_int);
+    return solve_cpp_impl(func, x0, jac, lb, ub, strategy_int, linsol_int, verbose);
 }
 
 // 模块定义
-// 模块名必须与 setup.py 中的 "pykinsol" 保持一致
 PYBIND11_MODULE(pykinsol, m) {
-    m.doc() = "Kinsol solver top-level module (C++ backend)";
+    m.doc() = "Kinsol solver with logging control";
 
-    // 导出主求解函数
-    // 允许用户以 pykinsol.pykinsol(...) 的方式调用
     m.def("pykinsol", &solve_cpp_wrapper, 
-          "Solve nonlinear system F(x)=0 with box constraints.",
           "func"_a, 
           "x0"_a, 
-          "fprime"_a = py::none(),      // 可选参数：雅可比
-          "lb"_a = py::none(),       // 可选参数：下界
-          "ub"_a = py::none(),       // 可选参数：上界
-          "method"_a = "linesearch", // 默认参数：线搜索
-          "linear_solver"_a = "dense" // 默认参数：稠密求解
+          "fprime"_a = py::none(), 
+          "lb"_a = py::none(), 
+          "ub"_a = py::none(), 
+          "method"_a = "linesearch", 
+          "linear_solver"_a = "dense",
+          "verbose"_a = 1 // <--- 【新增】默认开启 1 级日志
     );
     
-    // 导出常量 (可选，供用户检查)
     m.attr("KIN_NONE") = py::int_(KIN_NONE);
     m.attr("KIN_LINESEARCH") = py::int_(KIN_LINESEARCH);
 }

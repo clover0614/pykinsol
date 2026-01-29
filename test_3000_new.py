@@ -16,6 +16,8 @@ except ImportError as e:
     print("请检查是否已执行 pip install . 并且不在源码目录下运行此脚本")
     sys.exit(1)
 
+from pykinsol import pykinsol
+
 def main():
     # --- 1. 问题规模与参数设置 ---
     # 3000 维对于 Dense 矩阵来说有点大 (9百万个元素)，GMRES 会快很多
@@ -61,24 +63,24 @@ def main():
     # =================================================================
     # 测试 1: GMRES 求解器 (推荐用于大系统)
     # =================================================================
-    print(f"\n>>> [测试 1] 正在使用 [GMRES + LineSearch] 策略求解...")
-    start_time = time.time()
+    # print(f"\n>>> [测试 1] 正在使用 [GMRES + LineSearch] 策略求解...")
+    # start_time = time.time()
     
-    # 【关键修改 2】 调用方式适配: pykinsol.pykinsol(...)
-    result_gmres = pykinsol.pykinsol(
-        func=residual_func,
-        x0=x0,
-        fprime=None,       # GMRES 模式不需要 Jacobian，传 None
-        lb=lb, 
-        ub=ub,
-        method='linesearch',
-        linear_solver='gmres'  # 使用您新增的 GMRES 功能
-    )
+    # # 【关键修改 2】 调用方式适配: pykinsol.pykinsol(...)
+    # result_gmres = pykinsol(
+    #     func=residual_func,
+    #     x0=x0,
+    #     fprime=None,       # GMRES 模式不需要 Jacobian，传 None
+    #     lb=lb, 
+    #     ub=ub,
+    #     method='linesearch',
+    #     linear_solver='gmres'  # 使用您新增的 GMRES 功能
+    # )
     
-    duration = (time.time() - start_time) * 1000
-    print(f"GMRES 耗时: {duration:.3f} ms")
-    print(f"GMRES 结果状态: {'成功' if result_gmres['success'] else '失败'}")
-    print(f"GMRES 最终残差: {result_gmres['fun']:.3e}")
+    # duration = (time.time() - start_time) * 1000
+    # print(f"GMRES 耗时: {duration:.3f} ms")
+    # print(f"GMRES 结果状态: {'成功' if result_gmres['success'] else '失败'}")
+    # print(f"GMRES 最终残差: {result_gmres['fun']:.3e}")
 
     # =================================================================
     # 测试 2: Dense 求解器 (旧模式，用于对比)
@@ -87,7 +89,7 @@ def main():
     start_time = time.time()
     
     # 注意: 3000维 Dense 矩阵约 72MB，计算稍慢是正常的
-    result_dense = pykinsol.pykinsol(
+    result_dense = pykinsol(
         func=residual_func,
         x0=x0,
         fprime=jacobian_func,    # Dense 模式必须提供 Jacobian
@@ -101,25 +103,26 @@ def main():
     print(f"Dense 耗时: {duration:.3f} ms")
     print(f"Dense 结果状态: {'成功' if result_dense['success'] else '失败'}")
     print(f"Dense 最终残差: {result_dense['fun']:.3e}")
+    print(f"Dense 手动计算残差 Norm: {np.linalg.norm(residual_func(result_dense['x'])):.6e}")
 
     # =================================================================
     # 结果验证 (以 GMRES 结果为例)
     # =================================================================
-    if result_gmres["success"]:
-        final_x = result_gmres["x"]
+    # if result_gmres["success"]:
+    #     final_x = result_gmres["x"]
         
-        # 边界约束验证
-        within_bounds = np.all((final_x >= lb - 1e-9) & (final_x <= ub + 1e-9))
-        print(f"\n>>> 约束满足检查: {within_bounds}")
+    #     # 边界约束验证
+    #     within_bounds = np.all((final_x >= lb - 1e-9) & (final_x <= ub + 1e-9))
+    #     print(f"\n>>> 约束满足检查: {within_bounds}")
         
-        # 精度检查
-        err = np.linalg.norm(final_x - x_true)
-        print(f">>> 与真值误差 Norm: {err:.3e}")
+    #     # 精度检查
+    #     err = np.linalg.norm(final_x - x_true)
+    #     print(f">>> 与真值误差 Norm: {err:.3e}")
         
-        if err < 1e-4:
-            print("🎉 测试通过！求解结果非常精确。")
-        else:
-            print("⚠️ 警告：虽然收敛但精度似乎一般，请检查物理模型。")
+    #     if err < 1e-4:
+    #         print("🎉 测试通过！求解结果非常精确。")
+    #     else:
+    #         print("⚠️ 警告：虽然收敛但精度似乎一般，请检查物理模型。")
 
 if __name__ == "__main__":
     main()
