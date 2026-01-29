@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pykinsol
-Version: 0.2.0
+Version: 0.4.0
 Summary: SUNDIALS KINSOL wrapper with bound constraints for Python
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
