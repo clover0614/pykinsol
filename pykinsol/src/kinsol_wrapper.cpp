@@ -9,6 +9,7 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <iomanip>
 
 namespace py = pybind11;
 using namespace pybind11::literals;
@@ -57,33 +58,6 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
     py::array_t<double> res_py = data->func(x_py);
     auto res_proxy = res_py.unchecked<1>();
 
-
-// --- 【新增调试代码】 打印前几个变量的 s1, s2 和 x ---
-    // 为了防止刷屏，只打印第一次调用或者特定条件下的值
-    // 这里我们简单粗暴地打印前 3 个分量，或者您可以挑一个已知在边界上的索引打印
-    static int print_count = 0;
-    std::cout << print_count << "\n";
-    if (print_count < 5) { // 只打印前5次调用
-        std::cout << "\n[DEBUG KinsolSysFn Call " << print_count << "]" << std::endl;
-        for (int i = 0; i < std::min(N, 5); ++i) { // 打印前5个变量
-            double s1 = s_data[i];
-            double s2 = s_data[i+N];
-            double current_x = data->lb[i] + s1;
-            double width = data->ub[i] - data->lb[i];
-            
-            // 打印关键信息
-            std::cout << "  Idx " << i << ": "
-                      << "lb=" << data->lb[i] << ", "
-                      << "s1=" << s1 << ", "
-                      << "s2=" << s2 << ", "
-                      << "s1+s2=" << (s1+s2) << " (width=" << width << "), "
-                      << "x=" << current_x << std::endl;
-        }
-        print_count++;
-    }
-    // ----------------------------------------------------
-
-
     // 填充残差向量 f
     // f_i = F(x)_i  (物理方程)
     // f_{i+N} = s1_i + s2_i - (ub_i - lb_i)  (约束方程：确保 x 在 lb 和 ub 之间)
@@ -91,6 +65,78 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
         f_data[i] = res_proxy(i);
         f_data[i + N] = s_data[i] + s_data[i + N] - (data->ub[i] - data->lb[i]);
     }
+
+    // -----------------------------------------------------------------------------
+    // [修改版调试逻辑] 放在 KinsolSysFn 函数中，填充完 f_data 之后，return 0 之前
+    // -----------------------------------------------------------------------------
+
+    static int print_count = 0;
+    // 只看初值（第一次）的s1和s2
+    if (print_count < 1) { 
+        std::cout << "\n================ [DEBUG: Residual & Bound Check (Call " << print_count << ")] ================" << std::endl;
+        std::cout << "Thresholds: Abs(Res) > 1e-3  OR  s < 1e-6" << std::endl;
+        
+        // 设置输出格式为科学计数法，保留 16 位有效数字
+        // 这样能看清 5.578e-14 和 0.0 的区别，以及 0.1000000000000001 和 0.1 的区别
+        std::cout << std::scientific << std::setprecision(16);
+
+        bool found_issue = false;
+        double max_phys_res = 0.0;
+        double max_constr_res = 0.0;
+        int max_phys_idx = -1;
+        
+        for (int i = 0; i < N; ++i) {
+            double s1 = s_data[i];
+            double s2 = s_data[i + N];
+            double phys_res = f_data[i];       
+            double constr_res = f_data[i + N]; 
+            
+            // 记录最大误差
+            if (std::abs(phys_res) > max_phys_res) {
+                max_phys_res = std::abs(phys_res);
+                max_phys_idx = i;
+            }
+            if (std::abs(constr_res) > max_constr_res) max_constr_res = std::abs(constr_res);
+
+            // 筛选条件
+            bool is_res_bad = (std::abs(phys_res) > 1e-3) || (std::abs(constr_res) > 1e-3);
+            bool is_bound_active = (s1 < 1e-6) || (s2 < 1e-6);
+
+            if (is_res_bad || is_bound_active) {
+                found_issue = true;
+                std::cout << "[Idx " << i << "] ";
+                
+                if (is_res_bad) std::cout << "❌RES_FAIL ";
+                if (is_bound_active) std::cout << "⚠️ON_BOUND ";
+                
+                std::cout << "| PhysRes=" << phys_res 
+                        << " | ConstrRes=" << constr_res 
+                        << " | s1=" << s1 
+                        << " | s2=" << s2 
+                        << " | lb=" << data->lb[i]
+                        << " | ub=" << data->ub[i]
+                        // 这里特意把 s1 单独加进去看，防止 lb 把 s1 的精度“吃掉”导致看不清
+                        << " | x(lb+s1)=" << (data->lb[i] + s1)
+                        << std::endl;
+            }
+        }
+        
+        if (!found_issue) {
+            std::cout << "✅ No obvious outliers found." << std::endl;
+        } else {
+            std::cout << "----------------------------------------------------------------" << std::endl;
+            std::cout << "📈 Max Phys Res: " << max_phys_res << " (at Idx " << max_phys_idx << ")" << std::endl;
+            std::cout << "📈 Max Constr Res: " << max_constr_res << std::endl;
+        }
+        
+        // 恢复默认输出格式（可选，以免影响后续日志）
+        std::cout.unsetf(std::ios_base::floatfield); 
+        std::cout << std::setprecision(6);
+        std::cout << "======================================================================\n" << std::endl;
+        
+        print_count++;
+    }
+
     return 0;
 }
 
