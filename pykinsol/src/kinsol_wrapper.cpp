@@ -106,8 +106,8 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
                 found_issue = true;
                 std::cout << "[Idx " << i << "] ";
                 
-                if (is_res_bad) std::cout << "❌RES_FAIL ";
-                if (is_bound_active) std::cout << "⚠️ON_BOUND ";
+                if (is_res_bad) std::cout << "!!!!RES_FAIL ";
+                if (is_bound_active) std::cout << "!!!!ON_BOUND ";
                 
                 std::cout << "| PhysRes=" << phys_res 
                         << " | ConstrRes=" << constr_res 
@@ -122,11 +122,11 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
         }
         
         if (!found_issue) {
-            std::cout << "✅ No obvious outliers found." << std::endl;
+            std::cout << "No obvious outliers found." << std::endl;
         } else {
             std::cout << "----------------------------------------------------------------" << std::endl;
-            std::cout << "📈 Max Phys Res: " << max_phys_res << " (at Idx " << max_phys_idx << ")" << std::endl;
-            std::cout << "📈 Max Constr Res: " << max_constr_res << std::endl;
+            std::cout << "Max Phys Res: " << max_phys_res << " (at Idx " << max_phys_idx << ")" << std::endl;
+            std::cout << "Max Constr Res: " << max_constr_res << std::endl;
         }
         
         // 恢复默认输出格式（可选，以免影响后续日志）
