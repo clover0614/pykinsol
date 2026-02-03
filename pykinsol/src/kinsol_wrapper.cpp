@@ -208,7 +208,6 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     // 设置容差
     KINSetFuncNormTol(kin_mem, fnormtol);
     KINSetScaledStepTol(kin_mem, scsteptol);
-
     KINSetUserData(kin_mem, &data);
 
     // // 设置约束：松弛变量必须大于等于0
@@ -257,6 +256,53 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     N_Vector scaling = N_VNew_Serial(2 * N, sunctx);
     N_VConst(1.0, scaling); 
     
+
+
+    // ================= [DEBUG: x0 Consistency Check] =================
+    std::cout << "\n================ [DEBUG: x0 vs (lb+s) Consistency Check] ================" << std::endl;
+    std::cout << std::scientific << std::setprecision(16);
+
+    auto x0_proxy = x0.unchecked<1>(); // Python 传入的原始 x0
+    bool precision_loss_detected = false;
+
+    // 遍历所有变量
+    for (int i = 0; i < N; ++i) {
+        double original_x = x0_proxy(i);
+        
+        // 模拟 KinsolSysFn 中的恢复逻辑
+        double s1 = NV_Ith_S(u, i); // 获取当前的 s1
+        double lb_val = data.lb[i]; // 获取当前的 lb
+        double recon_x = lb_val + s1; // 恢复 x
+        
+        // 计算绝对误差和相对误差
+        double abs_diff = std::abs(original_x - recon_x);
+        double rel_diff = (std::abs(original_x) > 1e-20) ? (abs_diff / std::abs(original_x)) : abs_diff;
+
+        // 判定阈值：如果差异明显（比如超过 double 机器精度的 10 倍）
+        if (abs_diff > 1e-15 && rel_diff > 1e-14) {
+            precision_loss_detected = true;
+            std::cout << "[MISMATCH Idx " << i << "] "
+                    << "Mask=" << constraint_mask.unchecked<1>()(i) << " | "
+                    << "Orig_x=" << original_x 
+                    << " | lb=" << lb_val 
+                    << " | s1=" << s1 
+                    << " | Recon_x=" << recon_x 
+                    << " | Diff=" << abs_diff << std::endl;
+            
+            // 只打印前 10 个错误，防止刷屏
+            static int err_count = 0;
+            if (++err_count > 10) break;
+        }
+    }
+
+    if (!precision_loss_detected) {
+        std::cout << "SUCCESS: x0 and internal reconstruction match perfectly." << std::endl;
+    } else {
+        std::cout << "FATAL: Significant precision loss detected during variable transformation!" << std::endl;
+    }
+    std::cout << "=========================================================================\n" << std::endl;
+    // =============================================================================
+
     // 执行求解
     int flag = KINSol(kin_mem, u, strategy, scaling, scaling);
     
