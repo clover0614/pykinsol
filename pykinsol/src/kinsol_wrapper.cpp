@@ -176,6 +176,7 @@ static int KinsolJacFn(N_Vector u, N_Vector fu, SUNMatrix J, void *user_data, N_
 // 主求解器实现
 py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object jac, 
                         py::array_t<double> lb, py::array_t<double> ub,
+                        py::array_t<int> constraint_mask,
                         int strategy, int linsol_type, 
                         int verbose) { // <---【新增】verbose 参数
     
@@ -204,10 +205,27 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     KINInit(kin_mem, KinsolSysFn, u);
     KINSetUserData(kin_mem, &data);
 
-    // 设置约束：松弛变量必须大于等于0
+    // // 设置约束：松弛变量必须大于等于0
+    // N_Vector constr = N_VNew_Serial(2 * N, sunctx);
+    // N_VConst(2.0, constr); 
+    // KINSetConstraints(kin_mem, constr);
+
+    // 设置约束向量
     N_Vector constr = N_VNew_Serial(2 * N, sunctx);
-    N_VConst(2.0, constr); 
+    double* constr_ptr = NV_DATA_S(constr);
+    auto mask = constraint_mask.unchecked<1>();
+
+    for (int i = 0; i < N; ++i) {
+        if (mask(i) == 1) { // 1 代表需要约束
+            constr_ptr[i] = 2.0;     // s1 > 0
+            constr_ptr[i + N] = 2.0; // s2 > 0
+        } else {            // 0 代表无约束
+            constr_ptr[i] = 0.0;     // s1 自由
+            constr_ptr[i + N] = 0.0; // s2 自由
+        }
+    }
     KINSetConstraints(kin_mem, constr);
+
 
     // --- 【新增】设置日志打印级别 ---
     // level 0: 不输出
@@ -263,13 +281,15 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
 // 包装函数
 py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object jac, 
                            py::array_t<double> lb, py::array_t<double> ub,
+                           py::array_t<int> constraint_mask,
                            std::string method, std::string linear_solver, 
+                           
                            int verbose) { // <--- 【新增】暴露给 Python
     
     int strategy_int = get_strategy_enum(method);
     int linsol_int = get_linsol_enum(linear_solver);
 
-    return solve_cpp_impl(func, x0, jac, lb, ub, strategy_int, linsol_int, verbose);
+    return solve_cpp_impl(func, x0, jac, lb, ub, constraint_mask, strategy_int, linsol_int, verbose);
 }
 
 // 模块定义
@@ -283,6 +303,7 @@ PYBIND11_MODULE(pykinsol, m) {
           "lb"_a = py::none(), 
           "ub"_a = py::none(), 
           "method"_a = "linesearch", 
+          "constraint_mask"_a,
           "linear_solver"_a = "dense",
           "verbose"_a = 1 // <--- 【新增】默认开启 1 级日志
     );
