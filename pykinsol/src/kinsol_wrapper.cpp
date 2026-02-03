@@ -283,7 +283,6 @@ py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object
                            py::array_t<double> lb, py::array_t<double> ub,
                            py::array_t<int> constraint_mask,
                            std::string method, std::string linear_solver, 
-                           
                            int verbose) { // <--- 【新增】暴露给 Python
     
     int strategy_int = get_strategy_enum(method);
@@ -301,8 +300,8 @@ PYBIND11_MODULE(pykinsol, m) {
           "fprime"_a = py::none(), 
           "lb"_a = py::none(), 
           "ub"_a = py::none(), 
-          "method"_a = "linesearch", 
           "constraint_mask"_a,
+          "method"_a = "linesearch", 
           "linear_solver"_a = "dense",
           "verbose"_a = 1 // <--- 【新增】默认开启 1 级日志
     );
