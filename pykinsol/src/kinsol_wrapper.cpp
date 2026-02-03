@@ -178,7 +178,9 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
                         py::array_t<double> lb, py::array_t<double> ub,
                         py::array_t<int> constraint_mask,
                         int strategy, int linsol_type, 
-                        int verbose) { // <---【新增】verbose 参数
+                        int verbose,
+                        double fnormtol, double scsteptol
+                        ) { // <---【新增】verbose 参数
     
     int N = x0.size();
     SUNContext sunctx;
@@ -203,6 +205,10 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     // 创建 KINSOL 内存
     void* kin_mem = KINCreate(sunctx);
     KINInit(kin_mem, KinsolSysFn, u);
+    // 设置容差
+    KINSetFuncNormTol(kin_mem, fnormtol);
+    KINSetScaledStepTol(kin_mem, scsteptol);
+
     KINSetUserData(kin_mem, &data);
 
     // // 设置约束：松弛变量必须大于等于0
@@ -283,12 +289,14 @@ py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object
                            py::array_t<double> lb, py::array_t<double> ub,
                            py::array_t<int> constraint_mask,
                            std::string method, std::string linear_solver, 
-                           int verbose) { // <--- 【新增】暴露给 Python
+                           int verbose, 
+                           double fnormtol, double scsteptol
+                           ) {
     
     int strategy_int = get_strategy_enum(method);
     int linsol_int = get_linsol_enum(linear_solver);
 
-    return solve_cpp_impl(func, x0, jac, lb, ub, constraint_mask, strategy_int, linsol_int, verbose);
+    return solve_cpp_impl(func, x0, jac, lb, ub, constraint_mask, strategy_int, linsol_int, verbose, fnormtol, scsteptol);
 }
 
 // 模块定义
@@ -303,7 +311,9 @@ PYBIND11_MODULE(pykinsol, m) {
           "constraint_mask"_a,
           "method"_a = "linesearch", 
           "linear_solver"_a = "dense",
-          "verbose"_a = 1 // <--- 【新增】默认开启 1 级日志
+          "verbose"_a = 1, // <--- 【新增】默认开启 1 级日志
+          "fnormtol"_a = 1e-8,   // 默认值保持宽松
+          "scsteptol"_a = 1e-20  // 默认值
     );
     
     m.attr("KIN_NONE") = py::int_(KIN_NONE);
