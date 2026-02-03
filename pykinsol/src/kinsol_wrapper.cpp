@@ -295,7 +295,6 @@ py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object
 // 模块定义
 PYBIND11_MODULE(pykinsol, m) {
     m.doc() = "Kinsol solver with logging control";
-
     m.def("pykinsol", &solve_cpp_wrapper, 
           "func"_a, 
           "x0"_a, 
