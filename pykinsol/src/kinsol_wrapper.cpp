@@ -18,7 +18,7 @@ using namespace pybind11::literals;
 const int LINSOL_DENSE = 0;
 const int LINSOL_GMRES = 1;
 
-// 用户数据结构体，用于向 SUNDIALS 传递 Python 回调和参数
+// 用户数据结构体
 struct KinsolUserData {
     py::function func;      // Python 残差函数
     py::function jac_func;  // Python 雅可比函数
@@ -30,18 +30,17 @@ struct KinsolUserData {
 
 // 辅助函数：将字符串策略转换为 KINSOL 内部整数常量
 int get_strategy_enum(std::string method) {
-    if (method == "newton" || method == "NEWTON") return KIN_NONE; // 纯牛顿法
+    if (method == "newton" || method == "NEWTON") return KIN_NONE; 
     return KIN_LINESEARCH; // 默认使用线搜索
 }
 
 // 辅助函数：将字符串求解器类型转换为内部整数常量
 int get_linsol_enum(std::string solver) {
-    if (solver == "gmres" || solver == "GMRES") return LINSOL_GMRES; // GMRES 迭代求解
-    return LINSOL_DENSE; // 默认使用稠密直接求解
+    if (solver == "gmres" || solver == "GMRES") return LINSOL_GMRES; 
+    return LINSOL_DENSE; 
 }
 
 // 系统残差函数 F(u) -> f
-// 负责将松弛变量 u 映射回 x，计算 F(x)，并添加松弛约束方程
 static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
     auto* data = static_cast<KinsolUserData*>(user_data);
     int N = data->N;
@@ -49,7 +48,6 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
     double* f_data = NV_DATA_S(f); // 输出残差 f
 
     // 从松弛变量 s 恢复出原始变量 x
-    // x = lb + s1 (s1 对应 u 的前 N 个元素)
     py::array_t<double> x_py(N);
     double* x_ptr = x_py.mutable_data();
     for (int i = 0; i < N; ++i) x_ptr[i] = data->lb[i] + s_data[i];
@@ -59,84 +57,15 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
     auto res_proxy = res_py.unchecked<1>();
 
     // 填充残差向量 f
-    // f_i = F(x)_i  (物理方程)
-    // f_{i+N} = s1_i + s2_i - (ub_i - lb_i)  (约束方程：确保 x 在 lb 和 ub 之间)
+    // f_i = F(x)_i 
+    // f_{i+N} = s1_i + s2_i - (ub_i - lb_i)
     for (int i = 0; i < N; ++i) {
         f_data[i] = res_proxy(i);
         f_data[i + N] = s_data[i] + s_data[i + N] - (data->ub[i] - data->lb[i]);
     }
 
-    // -----------------------------------------------------------------------------
-    // [修改版调试逻辑] 放在 KinsolSysFn 函数中，填充完 f_data 之后，return 0 之前
-    // -----------------------------------------------------------------------------
-
-    static int print_count = 0;
-    // 只看初值（第一次）的s1和s2
-    if (print_count < 1) { 
-        std::cout << "\n================ [DEBUG: Residual & Bound Check (Call " << print_count << ")] ================" << std::endl;
-        std::cout << "Thresholds: Abs(Res) > 1e-3  OR  s < 1e-6" << std::endl;
-        
-        // 设置输出格式为科学计数法，保留 16 位有效数字
-        // 这样能看清 5.578e-14 和 0.0 的区别，以及 0.1000000000000001 和 0.1 的区别
-        std::cout << std::scientific << std::setprecision(16);
-
-        bool found_issue = false;
-        double max_phys_res = 0.0;
-        double max_constr_res = 0.0;
-        int max_phys_idx = -1;
-        
-        for (int i = 0; i < N; ++i) {
-            double s1 = s_data[i];
-            double s2 = s_data[i + N];
-            double phys_res = f_data[i];       
-            double constr_res = f_data[i + N]; 
-            
-            // 记录最大误差
-            if (std::abs(phys_res) > max_phys_res) {
-                max_phys_res = std::abs(phys_res);
-                max_phys_idx = i;
-            }
-            if (std::abs(constr_res) > max_constr_res) max_constr_res = std::abs(constr_res);
-
-            // 筛选条件
-            bool is_res_bad = (std::abs(phys_res) > 1e-3) || (std::abs(constr_res) > 1e-3);
-            bool is_bound_active = (s1 < 1e-6) || (s2 < 1e-6);
-
-            if (is_res_bad || is_bound_active) {
-                found_issue = true;
-                std::cout << "[Idx " << i << "] ";
-                
-                if (is_res_bad) std::cout << "!!!!RES_FAIL ";
-                if (is_bound_active) std::cout << "!!!!ON_BOUND ";
-                
-                std::cout << "| PhysRes=" << phys_res 
-                        << " | ConstrRes=" << constr_res 
-                        << " | s1=" << s1 
-                        << " | s2=" << s2 
-                        << " | lb=" << data->lb[i]
-                        << " | ub=" << data->ub[i]
-                        // 这里特意把 s1 单独加进去看，防止 lb 把 s1 的精度“吃掉”导致看不清
-                        << " | x(lb+s1)=" << (data->lb[i] + s1)
-                        << std::endl;
-            }
-        }
-        
-        if (!found_issue) {
-            std::cout << "No obvious outliers found." << std::endl;
-        } else {
-            std::cout << "----------------------------------------------------------------" << std::endl;
-            std::cout << "Max Phys Res: " << max_phys_res << " (at Idx " << max_phys_idx << ")" << std::endl;
-            std::cout << "Max Constr Res: " << max_constr_res << std::endl;
-        }
-        
-        // 恢复默认输出格式（可选，以免影响后续日志）
-        std::cout.unsetf(std::ios_base::floatfield); 
-        std::cout << std::setprecision(6);
-        std::cout << "======================================================================\n" << std::endl;
-        
-        print_count++;
-    }
-
+    // [已删除] 原先繁杂的 Debug 打印逻辑
+    
     return 0;
 }
 
@@ -146,7 +75,7 @@ static int KinsolJacFn(N_Vector u, N_Vector fu, SUNMatrix J, void *user_data, N_
     int N = data->N;
     double* s_data = NV_DATA_S(u);
     double* J_data = SM_CONTENT_D(J)->data; 
-    int M = 2 * N; // 系统总维度
+    int M = 2 * N; 
 
     // 恢复 x
     py::array_t<double> x_py(N);
@@ -159,14 +88,11 @@ static int KinsolJacFn(N_Vector u, N_Vector fu, SUNMatrix J, void *user_data, N_
     // 初始化矩阵为 0
     std::fill(J_data, J_data + M * M, 0.0);
 
-    // 填充稠密雅可比矩阵 (列优先存储 Column-Major)
+    // 填充稠密雅可比矩阵
     for (int j = 0; j < N; ++j) {
-        // 填充左上角：dF/dx
         for (int i = 0; i < N; ++i) {
             J_data[i + j * M] = jac_proxy(i, j);
         }
-        // 填充约束部分的导数 (恒为 1.0)
-        // ds1/ds1 = 1, ds2/ds2 = 1
         J_data[(j + N) + j * M] = 1.0; 
         J_data[(j + N) + (j + N) * M] = 1.0; 
     }
@@ -179,8 +105,9 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
                         py::array_t<int> constraint_mask,
                         int strategy, int linsol_type, 
                         int verbose,
-                        double fnormtol, double scsteptol
-                        ) { // <---【新增】verbose 参数
+                        double fnormtol, double scsteptol,
+                        py::dict options // <--- [新增] 接收 options 字典
+                        ) { 
     
     int N = x0.size();
     SUNContext sunctx;
@@ -194,7 +121,7 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     data.has_jac = !jac.is_none();
     if (data.has_jac) data.jac_func = jac.cast<py::function>();
 
-    // 初始化松弛变量 u (保持您原来的松弛变量逻辑)
+    // 初始化松弛变量 u
     N_Vector u = N_VNew_Serial(2 * N, sunctx);
     auto x0_p = x0.unchecked<1>();
     for (int i = 0; i < N; ++i) {
@@ -205,15 +132,11 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     // 创建 KINSOL 内存
     void* kin_mem = KINCreate(sunctx);
     KINInit(kin_mem, KinsolSysFn, u);
-    // 设置容差
+    
+    // 设置基础容差
     KINSetFuncNormTol(kin_mem, fnormtol);
     KINSetScaledStepTol(kin_mem, scsteptol);
     KINSetUserData(kin_mem, &data);
-
-    // // 设置约束：松弛变量必须大于等于0
-    // N_Vector constr = N_VNew_Serial(2 * N, sunctx);
-    // N_VConst(2.0, constr); 
-    // KINSetConstraints(kin_mem, constr);
 
     // 设置约束向量
     N_Vector constr = N_VNew_Serial(2 * N, sunctx);
@@ -221,24 +144,27 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     auto mask = constraint_mask.unchecked<1>();
 
     for (int i = 0; i < N; ++i) {
-        if (mask(i) == 1) { // 1 代表需要约束
+        if (mask(i) == 1) { 
             constr_ptr[i] = 2.0;     // s1 > 0
             constr_ptr[i + N] = 2.0; // s2 > 0
-        } else {            // 0 代表无约束
-            constr_ptr[i] = 0.0;     // s1 自由
-            constr_ptr[i + N] = 0.0; // s2 自由
+        } else {            
+            constr_ptr[i] = 0.0;     
+            constr_ptr[i + N] = 0.0; 
         }
     }
     KINSetConstraints(kin_mem, constr);
 
-
-    // --- 【新增】设置日志打印级别 ---
-    // level 0: 不输出
-    // level 1: 输出每次非线性迭代的统计信息 (残差范数, 步长)
-    // level 3: 输出非常详细的调试信息 (包括线性求解细节)
+    // 设置日志打印级别 (verbose)
     KINSetPrintLevel(kin_mem, verbose);
 
-    // 配置线性求解器 (保持不变)
+    // --- [新增] 解析并设置 max_iter (非线性迭代次数) ---
+    if (options.contains("max_iter")) {
+        long int mxiter = options["max_iter"].cast<long int>();
+        KINSetNumMaxIters(kin_mem, mxiter);
+        if (verbose > 0) std::cout << "Info: Set max_iter = " << mxiter << std::endl;
+    }
+
+    // 配置线性求解器
     SUNMatrix J = nullptr;
     SUNLinearSolver LS = nullptr;
 
@@ -249,59 +175,22 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
         if (data.has_jac) KINSetJacFn(kin_mem, KinsolJacFn);
     } 
     else if (linsol_type == LINSOL_GMRES) {
-        LS = SUNLinSol_SPGMR(u, PREC_NONE, 0, sunctx);
+        // --- [新增] 解析 linear_iter 并传递给 SPGMR ---
+        // 在 SUNDIALS 中，linear_iter 对应 maxl (Krylov 子空间重启维度)
+        int maxl = 0; // 0 表示使用 SUNDIALS 默认值 (通常是 5)
+        if (options.contains("linear_iter")) {
+            maxl = options["linear_iter"].cast<int>();
+            if (verbose > 0) std::cout << "Info: Set linear_iter (GMRES maxl) = " << maxl << std::endl;
+        }
+
+        LS = SUNLinSol_SPGMR(u, PREC_NONE, maxl, sunctx);
         KINSetLinearSolver(kin_mem, LS, nullptr);
     }
 
     N_Vector scaling = N_VNew_Serial(2 * N, sunctx);
     N_VConst(1.0, scaling); 
     
-
-
-    // ================= [DEBUG: x0 Consistency Check] =================
-    std::cout << "\n================ [DEBUG: x0 vs (lb+s) Consistency Check] ================" << std::endl;
-    std::cout << std::scientific << std::setprecision(16);
-
-    auto x0_proxy = x0.unchecked<1>(); // Python 传入的原始 x0
-    bool precision_loss_detected = false;
-
-    // 遍历所有变量
-    for (int i = 0; i < N; ++i) {
-        double original_x = x0_proxy(i);
-        
-        // 模拟 KinsolSysFn 中的恢复逻辑
-        double s1 = NV_Ith_S(u, i); // 获取当前的 s1
-        double lb_val = data.lb[i]; // 获取当前的 lb
-        double recon_x = lb_val + s1; // 恢复 x
-        
-        // 计算绝对误差和相对误差
-        double abs_diff = std::abs(original_x - recon_x);
-        double rel_diff = (std::abs(original_x) > 1e-20) ? (abs_diff / std::abs(original_x)) : abs_diff;
-
-        // 判定阈值：如果差异明显（比如超过 double 机器精度的 10 倍）
-        if (abs_diff > 1e-15 && rel_diff > 1e-14) {
-            precision_loss_detected = true;
-            std::cout << "[MISMATCH Idx " << i << "] "
-                    << "Mask=" << constraint_mask.unchecked<1>()(i) << " | "
-                    << "Orig_x=" << original_x 
-                    << " | lb=" << lb_val 
-                    << " | s1=" << s1 
-                    << " | Recon_x=" << recon_x 
-                    << " | Diff=" << abs_diff << std::endl;
-            
-            // 只打印前 10 个错误，防止刷屏
-            static int err_count = 0;
-            if (++err_count > 10) break;
-        }
-    }
-
-    if (!precision_loss_detected) {
-        std::cout << "SUCCESS: x0 and internal reconstruction match perfectly." << std::endl;
-    } else {
-        std::cout << "FATAL: Significant precision loss detected during variable transformation!" << std::endl;
-    }
-    std::cout << "=========================================================================\n" << std::endl;
-    // =============================================================================
+    // [已删除] 原先的 x0 Consistency Check Debug 代码
 
     // 执行求解
     int flag = KINSol(kin_mem, u, strategy, scaling, scaling);
@@ -336,18 +225,19 @@ py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object
                            py::array_t<int> constraint_mask,
                            std::string method, std::string linear_solver, 
                            int verbose, 
-                           double fnormtol, double scsteptol
+                           double fnormtol, double scsteptol,
+                           py::dict options // <--- [新增]
                            ) {
     
     int strategy_int = get_strategy_enum(method);
     int linsol_int = get_linsol_enum(linear_solver);
 
-    return solve_cpp_impl(func, x0, jac, lb, ub, constraint_mask, strategy_int, linsol_int, verbose, fnormtol, scsteptol);
+    return solve_cpp_impl(func, x0, jac, lb, ub, constraint_mask, strategy_int, linsol_int, verbose, fnormtol, scsteptol, options);
 }
 
 // 模块定义
 PYBIND11_MODULE(pykinsol, m) {
-    m.doc() = "Kinsol solver with logging control";
+    m.doc() = "Kinsol solver with logging control and options";
     m.def("pykinsol", &solve_cpp_wrapper, 
           "func"_a, 
           "x0"_a, 
@@ -357,9 +247,10 @@ PYBIND11_MODULE(pykinsol, m) {
           "constraint_mask"_a,
           "method"_a = "linesearch", 
           "linear_solver"_a = "dense",
-          "verbose"_a = 1, // <--- 【新增】默认开启 1 级日志
-          "fnormtol"_a = 1e-8,   // 默认值保持宽松
-          "scsteptol"_a = 1e-20  // 默认值
+          "verbose"_a = 1, 
+          "fnormtol"_a = 1e-8,   
+          "scsteptol"_a = 1e-20,
+          "options"_a = py::dict() // <--- [新增] 默认为空字典
     );
     
     m.attr("KIN_NONE") = py::int_(KIN_NONE);
