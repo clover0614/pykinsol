@@ -41,6 +41,7 @@ int get_linsol_enum(std::string solver) {
 }
 
 // 系统残差函数 F(u) -> f
+// 负责将松弛变量 u 映射回 x，计算 F(x)，并添加松弛约束方程
 static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
     auto* data = static_cast<KinsolUserData*>(user_data);
     int N = data->N;
@@ -48,6 +49,7 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
     double* f_data = NV_DATA_S(f); // 输出残差 f
 
     // 从松弛变量 s 恢复出原始变量 x
+    // x = lb + s1 (s1 对应 u 的前 N 个元素)
     py::array_t<double> x_py(N);
     double* x_ptr = x_py.mutable_data();
     for (int i = 0; i < N; ++i) x_ptr[i] = data->lb[i] + s_data[i];
@@ -57,15 +59,15 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
     auto res_proxy = res_py.unchecked<1>();
 
     // 填充残差向量 f
-    // f_i = F(x)_i 
-    // f_{i+N} = s1_i + s2_i - (ub_i - lb_i)
+    // f_i = F(x)_i  (物理方程)
+    // f_{i+N} = s1_i + s2_i - (ub_i - lb_i)  (约束方程)
     for (int i = 0; i < N; ++i) {
         f_data[i] = res_proxy(i);
         f_data[i + N] = s_data[i] + s_data[i + N] - (data->ub[i] - data->lb[i]);
     }
 
-    // [已删除] 原先繁杂的 Debug 打印逻辑
-    
+    // [已删除] 原先繁杂的 Debug 打印逻辑，保持代码纯净
+
     return 0;
 }
 
@@ -93,6 +95,7 @@ static int KinsolJacFn(N_Vector u, N_Vector fu, SUNMatrix J, void *user_data, N_
         for (int i = 0; i < N; ++i) {
             J_data[i + j * M] = jac_proxy(i, j);
         }
+        // 约束部分的导数
         J_data[(j + N) + j * M] = 1.0; 
         J_data[(j + N) + (j + N) * M] = 1.0; 
     }
@@ -102,11 +105,10 @@ static int KinsolJacFn(N_Vector u, N_Vector fu, SUNMatrix J, void *user_data, N_
 // 主求解器实现
 py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object jac, 
                         py::array_t<double> lb, py::array_t<double> ub,
-                        py::array_t<int> constraint_mask,
                         int strategy, int linsol_type, 
                         int verbose,
-                        double fnormtol, double scsteptol,
-                        py::dict options // <--- [新增] 接收 options 字典
+                        long int max_iter, // <--- [新增] 最大非线性迭代次数
+                        int linear_iter    // <--- [新增] 线性迭代次数 (GMRES maxl)
                         ) { 
     
     int N = x0.size();
@@ -132,36 +134,20 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     // 创建 KINSOL 内存
     void* kin_mem = KINCreate(sunctx);
     KINInit(kin_mem, KinsolSysFn, u);
-    
-    // 设置基础容差
-    KINSetFuncNormTol(kin_mem, fnormtol);
-    KINSetScaledStepTol(kin_mem, scsteptol);
     KINSetUserData(kin_mem, &data);
 
-    // 设置约束向量
+    // 设置约束：松弛变量必须大于等于0
     N_Vector constr = N_VNew_Serial(2 * N, sunctx);
-    double* constr_ptr = NV_DATA_S(constr);
-    auto mask = constraint_mask.unchecked<1>();
-
-    for (int i = 0; i < N; ++i) {
-        if (mask(i) == 1) { 
-            constr_ptr[i] = 2.0;     // s1 > 0
-            constr_ptr[i + N] = 2.0; // s2 > 0
-        } else {            
-            constr_ptr[i] = 0.0;     
-            constr_ptr[i + N] = 0.0; 
-        }
-    }
+    N_VConst(2.0, constr); 
     KINSetConstraints(kin_mem, constr);
 
-    // 设置日志打印级别 (verbose)
+    // 设置日志打印级别
     KINSetPrintLevel(kin_mem, verbose);
 
-    // --- [新增] 解析并设置 max_iter (非线性迭代次数) ---
-    if (options.contains("max_iter")) {
-        long int mxiter = options["max_iter"].cast<long int>();
-        KINSetNumMaxIters(kin_mem, mxiter);
-        if (verbose > 0) std::cout << "Info: Set max_iter = " << mxiter << std::endl;
+    // --- [新增] 设置最大非线性迭代次数 ---
+    // KINSOL 默认通常是 200，这里允许用户覆盖
+    if (max_iter > 0) {
+        KINSetNumMaxIters(kin_mem, max_iter);
     }
 
     // 配置线性求解器
@@ -175,23 +161,15 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
         if (data.has_jac) KINSetJacFn(kin_mem, KinsolJacFn);
     } 
     else if (linsol_type == LINSOL_GMRES) {
-        // --- [新增] 解析 linear_iter 并传递给 SPGMR ---
-        // 在 SUNDIALS 中，linear_iter 对应 maxl (Krylov 子空间重启维度)
-        int maxl = 0; // 0 表示使用 SUNDIALS 默认值 (通常是 5)
-        if (options.contains("linear_iter")) {
-            maxl = options["linear_iter"].cast<int>();
-            if (verbose > 0) std::cout << "Info: Set linear_iter (GMRES maxl) = " << maxl << std::endl;
-        }
-
-        LS = SUNLinSol_SPGMR(u, PREC_NONE, maxl, sunctx);
+        // --- [修改] 传递 linear_iter 作为 maxl (重启维度) ---
+        // 如果 linear_iter 为 0，SUNDIALS 会使用默认值 (通常是 5)
+        LS = SUNLinSol_SPGMR(u, PREC_NONE, linear_iter, sunctx);
         KINSetLinearSolver(kin_mem, LS, nullptr);
     }
 
     N_Vector scaling = N_VNew_Serial(2 * N, sunctx);
     N_VConst(1.0, scaling); 
     
-    // [已删除] 原先的 x0 Consistency Check Debug 代码
-
     // 执行求解
     int flag = KINSol(kin_mem, u, strategy, scaling, scaling);
     
@@ -222,35 +200,33 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
 // 包装函数
 py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object jac, 
                            py::array_t<double> lb, py::array_t<double> ub,
-                           py::array_t<int> constraint_mask,
                            std::string method, std::string linear_solver, 
-                           int verbose, 
-                           double fnormtol, double scsteptol,
-                           py::dict options // <--- [新增]
+                           int verbose,
+                           long int max_iter, // <--- [新增]
+                           int linear_iter    // <--- [新增]
                            ) {
     
     int strategy_int = get_strategy_enum(method);
     int linsol_int = get_linsol_enum(linear_solver);
 
-    return solve_cpp_impl(func, x0, jac, lb, ub, constraint_mask, strategy_int, linsol_int, verbose, fnormtol, scsteptol, options);
+    return solve_cpp_impl(func, x0, jac, lb, ub, strategy_int, linsol_int, verbose, max_iter, linear_iter);
 }
 
 // 模块定义
 PYBIND11_MODULE(pykinsol, m) {
-    m.doc() = "Kinsol solver with logging control and options";
+    m.doc() = "Kinsol solver with configurable iterations";
+
     m.def("pykinsol", &solve_cpp_wrapper, 
           "func"_a, 
           "x0"_a, 
           "fprime"_a = py::none(), 
           "lb"_a = py::none(), 
           "ub"_a = py::none(), 
-          "constraint_mask"_a,
           "method"_a = "linesearch", 
           "linear_solver"_a = "dense",
-          "verbose"_a = 1, 
-          "fnormtol"_a = 1e-8,   
-          "scsteptol"_a = 1e-20,
-          "options"_a = py::dict() // <--- [新增] 默认为空字典
+          "verbose"_a = 1,
+          "max_iter"_a = 200, // <--- [新增] 默认 200
+          "linear_iter"_a = 0 // <--- [新增] 默认 0 (使用 SUNDIALS 默认值)
     );
     
     m.attr("KIN_NONE") = py::int_(KIN_NONE);
