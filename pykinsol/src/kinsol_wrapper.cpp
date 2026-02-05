@@ -66,8 +66,6 @@ static int KinsolSysFn(N_Vector u, N_Vector f, void *user_data) {
         f_data[i + N] = s_data[i] + s_data[i + N] - (data->ub[i] - data->lb[i]);
     }
 
-    // [已删除] 原先繁杂的 Debug 打印逻辑，保持代码纯净
-
     return 0;
 }
 
@@ -107,8 +105,10 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
                         py::array_t<double> lb, py::array_t<double> ub,
                         int strategy, int linsol_type, 
                         int verbose,
-                        long int max_iter, // <--- [新增] 最大非线性迭代次数
-                        int linear_iter    // <--- [新增] 线性迭代次数 (GMRES maxl)
+                        long int max_iter, // 最大非线性迭代次数
+                        int linear_iter,   // 线性迭代次数 (GMRES maxl)
+                        double tol,        // <--- [新增] 残差容差 (fnormtol)
+                        double step_tol    // <--- [新增] 步长容差 (scsteptol)
                         ) { 
     
     int N = x0.size();
@@ -144,10 +144,21 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
     // 设置日志打印级别
     KINSetPrintLevel(kin_mem, verbose);
 
-    // --- [新增] 设置最大非线性迭代次数 ---
-    // KINSOL 默认通常是 200，这里允许用户覆盖
+    // --- 设置最大非线性迭代次数 ---
     if (max_iter > 0) {
         KINSetNumMaxIters(kin_mem, max_iter);
+    }
+
+    // --- [新增] 设置残差容差 (Function Norm Tolerance) ---
+    // 停止条件：|| f(u) ||_L2 < tol
+    if (tol > 0.0) {
+        KINSetFuncNormTol(kin_mem, tol);
+    }
+
+    // --- [新增] 设置步长容差 (Scaled Step Tolerance) ---
+    // 停止条件：|| u_{new} - u_{old} || < step_tol
+    if (step_tol > 0.0) {
+        KINSetScaledStepTol(kin_mem, step_tol);
     }
 
     // 配置线性求解器
@@ -161,8 +172,6 @@ py::dict solve_cpp_impl(py::function func, py::array_t<double> x0, py::object ja
         if (data.has_jac) KINSetJacFn(kin_mem, KinsolJacFn);
     } 
     else if (linsol_type == LINSOL_GMRES) {
-        // --- [修改] 传递 linear_iter 作为 maxl (重启维度) ---
-        // 如果 linear_iter 为 0，SUNDIALS 会使用默认值 (通常是 5)
         LS = SUNLinSol_SPGMR(u, PREC_NONE, linear_iter, sunctx);
         KINSetLinearSolver(kin_mem, LS, nullptr);
     }
@@ -202,19 +211,21 @@ py::dict solve_cpp_wrapper(py::function func, py::array_t<double> x0, py::object
                            py::array_t<double> lb, py::array_t<double> ub,
                            std::string method, std::string linear_solver, 
                            int verbose,
-                           long int max_iter, // <--- [新增]
-                           int linear_iter    // <--- [新增]
+                           long int max_iter, 
+                           int linear_iter,
+                           double tol,      // <--- [新增]
+                           double step_tol  // <--- [新增]
                            ) {
     
     int strategy_int = get_strategy_enum(method);
     int linsol_int = get_linsol_enum(linear_solver);
 
-    return solve_cpp_impl(func, x0, jac, lb, ub, strategy_int, linsol_int, verbose, max_iter, linear_iter);
+    return solve_cpp_impl(func, x0, jac, lb, ub, strategy_int, linsol_int, verbose, max_iter, linear_iter, tol, step_tol);
 }
 
 // 模块定义
 PYBIND11_MODULE(pykinsol, m) {
-    m.doc() = "Kinsol solver with configurable iterations";
+    m.doc() = "Kinsol solver with configurable iterations and tolerances";
 
     m.def("pykinsol", &solve_cpp_wrapper, 
           "func"_a, 
@@ -225,8 +236,10 @@ PYBIND11_MODULE(pykinsol, m) {
           "method"_a = "linesearch", 
           "linear_solver"_a = "dense",
           "verbose"_a = 1,
-          "max_iter"_a = 200, // <--- [新增] 默认 200
-          "linear_iter"_a = 0 // <--- [新增] 默认 0 (使用 SUNDIALS 默认值)
+          "max_iter"_a = 200, 
+          "linear_iter"_a = 0,
+          "tol"_a = 1e-8,       // <--- [新增] 默认 0.0 表示使用 KINSOL 默认值
+          "step_tol"_a = 1e-10   // <--- [新增] 默认 0.0 表示使用 KINSOL 默认值
     );
     
     m.attr("KIN_NONE") = py::int_(KIN_NONE);
